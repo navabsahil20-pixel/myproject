@@ -103,4 +103,7 @@ def quiz():
 @app.get('/api/leaderboard')
 def leaderboard():
     c=db();r=c.execute('SELECT s.username,COALESCE(SUM(q.score*10),0) points FROM students s LEFT JOIN quiz_attempts q ON q.student_id=s.id GROUP BY s.id ORDER BY points DESC,s.username LIMIT 10').fetchall();c.close();return jsonify(leaderboard=[dict(x) for x in r])
-if __name__=='__main__':init_db();print('Open http://127.0.0.1:8000');app.run(host='127.0.0.1',port=8000,debug=False)
+if __name__=='__main__':
+    init_db()
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port, debug=False)
