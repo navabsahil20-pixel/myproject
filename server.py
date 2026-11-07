@@ -22,6 +22,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER,title TEXT,body TEXT,updated_at INTEGER);
     CREATE TABLE IF NOT EXISTS quiz_attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER,score INTEGER,total INTEGER,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS achievements(student_id INTEGER,key TEXT,title TEXT,PRIMARY KEY(student_id,key));
+    CREATE TABLE IF NOT EXISTS reviews(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER UNIQUE NOT NULL,rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),review TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(student_id) REFERENCES students(id));
     '''); c.commit(); c.close()
 
 def hash_pw(p):
@@ -100,10 +101,38 @@ def quiz():
     d=request.get_json(silent=True) or {};score=max(0,int(d.get('score',0)));total=max(1,int(d.get('total',5)));score=min(score,total);c=db();sid=session['student_id'];c.execute('INSERT INTO quiz_attempts(student_id,score,total) VALUES(?,?,?)',(sid,score,total))
     if score==total:c.execute('INSERT OR IGNORE INTO achievements VALUES(?,?,?)',(sid,'perfect','Perfect Quiz'))
     c.commit();c.close();return jsonify(ok=True)
+
+@app.get('/api/reviews')
+def get_reviews():
+    c=db()
+    stats=c.execute('SELECT COUNT(*) n, COALESCE(AVG(rating),0) avg FROM reviews').fetchone()
+    rows=c.execute('SELECT s.username,r.rating,r.review,r.created_at FROM reviews r JOIN students s ON s.id=r.student_id ORDER BY r.id DESC LIMIT 50').fetchall()
+    mine=None
+    if 'student_id' in session:
+        x=c.execute('SELECT rating,review FROM reviews WHERE student_id=?',(session['student_id'],)).fetchone()
+        if x: mine=dict(x)
+    c.close()
+    return jsonify(count=stats['n'],average=round(stats['avg'],1),reviews=[dict(x) for x in rows],mine=mine)
+
+@app.post('/api/reviews')
+@auth
+def save_review():
+    d=request.get_json(silent=True) or {}
+    try: rating=int(d.get('rating',0))
+    except (TypeError,ValueError): rating=0
+    review=str(d.get('review','')).strip()
+    if rating not in range(1,6): return jsonify(ok=False,error='Please select 1 to 5 stars.'),400
+    if not 5<=len(review)<=1000: return jsonify(ok=False,error='Review must be 5 to 1000 characters.'),400
+    c=db()
+    c.execute('INSERT INTO reviews(student_id,rating,review) VALUES(?,?,?) ON CONFLICT(student_id) DO UPDATE SET rating=excluded.rating,review=excluded.review,created_at=CURRENT_TIMESTAMP',(session['student_id'],rating,review))
+    c.commit();c.close()
+    return jsonify(ok=True)
+
 @app.get('/api/leaderboard')
 def leaderboard():
     c=db();r=c.execute('SELECT s.username,COALESCE(SUM(q.score*10),0) points FROM students s LEFT JOIN quiz_attempts q ON q.student_id=s.id GROUP BY s.id ORDER BY points DESC,s.username LIMIT 10').fetchall();c.close();return jsonify(leaderboard=[dict(x) for x in r])
+init_db()
+
 if __name__=='__main__':
-    init_db()
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    print('Open http://127.0.0.1:8000')
+    app.run(host='0.0.0.0',port=int(os.environ.get('PORT',8000)),debug=False)
